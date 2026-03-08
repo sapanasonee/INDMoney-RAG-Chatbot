@@ -20,4 +20,8 @@ def get_cors_origins() -> list[str]:
     origins = list(DEFAULT_ORIGINS)
     if frontend_url:
         origins.append(frontend_url)
+
+    # Allow all Vercel preview/production domains for this project
+    origins.append("https://frontend-pi-five-96.vercel.app")
+    origins.append("https://*.vercel.app")
     return origins

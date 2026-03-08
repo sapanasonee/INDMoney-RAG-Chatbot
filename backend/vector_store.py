@@ -1,11 +1,13 @@
 """
-Vector Search — In-memory embedding search (no ChromaDB dependency).
-Chunks processed_schemes.json, embeds with sentence-transformers, cosine similarity at query time.
+Vector Search — Loads pre-computed embeddings, uses Google Embedding API for queries.
+No heavy local model needed (no PyTorch/sentence-transformers).
 """
 
 from __future__ import annotations
 
 import json
+import os
+import urllib.request
 import numpy as np
 from pathlib import Path
 from typing import Any
@@ -13,8 +15,9 @@ from dataclasses import dataclass, field
 
 _BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = _BASE_DIR / "data"
-PROCESSED_SCHEMES_PATH = DATA_DIR / "processed_schemes.json"
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDINGS_PATH = DATA_DIR / "embeddings.npy"
+CHUNKS_PATH = DATA_DIR / "chunks.json"
+EMBEDDING_MODEL = "gemini-embedding-001"
 
 
 @dataclass
@@ -29,118 +32,63 @@ _store: _VectorStore | None = None
 class _VectorStore:
     def __init__(self, docs: list[Document], embeddings: np.ndarray):
         self.docs = docs
-        self.embeddings = embeddings  # shape (N, dim), L2-normalised
+        self.embeddings = embeddings
 
     def query(self, query_emb: np.ndarray, k: int = 5) -> list[tuple[Document, float]]:
-        scores = self.embeddings @ query_emb.T  # cosine similarity (normalised)
+        scores = self.embeddings @ query_emb.T
         scores = scores.flatten()
         top_k = np.argsort(scores)[::-1][:k]
         return [(self.docs[i], float(scores[i])) for i in top_k]
 
 
-def _load_processed_schemes() -> dict[str, Any]:
-    if not PROCESSED_SCHEMES_PATH.exists():
-        raise FileNotFoundError(f"Run the scraper first to create {PROCESSED_SCHEMES_PATH}")
-    with open(PROCESSED_SCHEMES_PATH, encoding="utf-8") as f:
-        return json.load(f)
-
-
-ALL_FACT_KEYS = [
-    "expense_ratio", "exit_load", "riskometer", "aum",
-    "benchmark", "fund_manager", "category", "objective",
-    "nav", "inception_date", "min_investment", "min_sip",
-]
-
-
-def _build_chunks(data: dict[str, Any]) -> list[Document]:
-    documents: list[Document] = []
-
-    for scheme_name, scheme_data in data.items():
-        if not isinstance(scheme_data, dict):
-            continue
-
-        for fact_entry in scheme_data.get("scheme_facts", []):
-            source_url = fact_entry.get("source_url") or ""
-            parts: list[str] = []
-            for key in ALL_FACT_KEYS:
-                obj = fact_entry.get(key)
-                if not isinstance(obj, dict):
-                    continue
-                val = obj.get("value")
-                if val is None:
-                    continue
-                label = key.replace("_", " ").title()
-                parts.append(f"{label}: {val}")
-            if not parts:
-                continue
-            text = f"{scheme_name}. " + ". ".join(parts)
-            documents.append(
-                Document(page_content=text, metadata={"source_url": source_url, "scheme": scheme_name, "type": "scheme_facts"})
-            )
-
-        for step_entry in scheme_data.get("how_to_download_statements", []):
-            step = step_entry.get("step")
-            source_url = step_entry.get("source_url") or ""
-            if not step or not isinstance(step, str):
-                continue
-            text = f"{scheme_name}. How to download statements: {step.strip()}"
-            documents.append(
-                Document(page_content=text, metadata={"source_url": source_url, "scheme": scheme_name, "type": "how_to"})
-            )
-
-        for chunk_entry in scheme_data.get("text_chunks", []):
-            text = chunk_entry.get("text", "")
-            source_url = chunk_entry.get("source_url", "")
-            if not text or len(text) < 30:
-                continue
-            documents.append(
-                Document(page_content=text, metadata={"source_url": source_url, "scheme": scheme_name, "type": "text_chunk"})
-            )
-
-    return documents
-
-
-def _get_model():
-    from sentence_transformers import SentenceTransformer
-    return SentenceTransformer(EMBEDDING_MODEL)
-
-
-_model_cache = None
-
-
-def _model():
-    global _model_cache
-    if _model_cache is None:
-        _model_cache = _get_model()
-    return _model_cache
+def _embed_query(text: str) -> np.ndarray:
+    api_key = os.getenv("GOOGLE_API_KEY", "")
+    body = json.dumps({
+        "model": f"models/{EMBEDDING_MODEL}",
+        "content": {"parts": [{"text": text[:2000]}]},
+    }).encode("utf-8")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL}:embedContent?key={api_key}"
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    emb = np.array(data["embedding"]["values"], dtype=np.float32)
+    norm = np.linalg.norm(emb)
+    if norm > 0:
+        emb = emb / norm
+    return emb
 
 
 def get_vector_store() -> _VectorStore:
     global _store
     if _store is not None:
         return _store
-    model = _model()
-    data = _load_processed_schemes()
-    docs = _build_chunks(data)
-    if not docs:
-        raise ValueError("No chunks produced from processed_schemes.json")
-    texts = [d.page_content for d in docs]
-    emb = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-    _store = _VectorStore(docs, np.array(emb))
+
+    embeddings = np.load(EMBEDDINGS_PATH)
+    with open(CHUNKS_PATH, encoding="utf-8") as f:
+        chunks_data = json.load(f)
+
+    docs = [
+        Document(
+            page_content=c["text"],
+            metadata={"source_url": c.get("source_url", ""), "scheme": c.get("scheme", ""), "type": c.get("type", "")},
+        )
+        for c in chunks_data
+    ]
+    _store = _VectorStore(docs, embeddings)
     return _store
 
 
 def query_vector_store(query: str, k: int = 5) -> list[tuple[Document, float]]:
     store = get_vector_store()
-    model = _model()
-    q_emb = model.encode([query], normalize_embeddings=True, show_progress_bar=False)
-    return store.query(np.array(q_emb), k=k)
+    q_emb = _embed_query(query)
+    return store.query(q_emb, k=k)
 
 
 if __name__ == "__main__":
+    import sys
+    sys.stdout.reconfigure(encoding="utf-8")
     store = get_vector_store()
-    print(f"Built in-memory vector store with {len(store.docs)} chunks")
-    results = query_vector_store("What is the expense ratio of HDFC Small Cap Fund?", k=3)
+    print(f"Loaded {len(store.docs)} chunks, embeddings shape {store.embeddings.shape}")
+    results = query_vector_store("What is the AUM of HDFC Flexi Cap Fund?", k=3)
     for doc, score in results:
-        print(f"  [{score:.3f}] {doc.page_content[:80]}...")
-        print(f"         source: {doc.metadata.get('source_url', 'N/A')}")
+        print(f"  [{score:.3f}] {doc.page_content[:100]}...")

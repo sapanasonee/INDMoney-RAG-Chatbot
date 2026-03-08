@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Build / env
+dist/
+.env
+.env.local
+*.egg-info/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ChromaDB (no longer used)
+chroma_data/
+backend/data/chroma_db/
+
+# Scraper local files (not needed in deploy)
+backend/data/chroma_db/
+
+# Vercel
+.vercel/

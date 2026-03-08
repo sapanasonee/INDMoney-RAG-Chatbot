@@ -1,0 +1,39 @@
+# Mutual Fund Chatbot New — Cursor Rules
+
+## Project
+- **Name:** Mutual Fund Chatbot New  
+- **Milestone 1:** Facts-only FAQ assistant for 5 schemes (no advice, citations required).
+
+## Mandatory Rules (All Code Generation)
+
+### 1. No Advice Rule (STRICT)
+- **Never** generate or suggest content that constitutes investment, tax, or financial advice.
+- **Never** recommend buying, selling, or holding any scheme; suggest allocation; or compare schemes for suitability.
+- Responses must be **factual only**: definitions, scheme details, NAV, dates, TER, fund manager names, objective, asset allocation from official documents—nothing that tells the user what to do.
+- If the user asks "Should I invest?", "Which is better?", or similar, the system must **refuse** and state that it only provides factual information from official sources, not advice.
+
+### 2. Citation Rule (MANDATORY)
+- **Every** answer that states a fact must include at least one **source link** to an official URL (AMFI, fund house SID/KIM/fact sheet, scheme page).
+- Source links must be from the **approved list** in the project README (12 official source URLs for the 5 schemes).
+- In backend/LLM prompts: enforce "Always cite the exact source URL for each fact. Maximum 3 sentences per answer. No advice."
+
+### 3. Answer Length
+- Maximum **3 sentences** per answer (enforce in prompts and response validation where applicable).
+
+### 4. Approved Schemes (Facts-Only Scope)
+- HDFC Small Cap Fund  
+- HDFC Flexi Cap Fund  
+- SBI Contra Fund  
+- HDFC ELSS Tax Saver  
+- Parag Parikh Flexi Cap  
+
+Only these 5 schemes are in scope. Do not answer or cite for other schemes unless adding a new official source to the README first.
+
+## Tech Stack
+- **Backend:** FastAPI, ChromaDB, LangChain  
+- **Frontend:** React (Vite), Tailwind CSS  
+
+## Conventions
+- Prefer type hints and clear module boundaries in backend.
+- Frontend: functional components, Tailwind for styling.
+- All API responses that return FAQ answers must include a `sources` array with at least one URL.

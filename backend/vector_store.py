@@ -42,20 +42,31 @@ class _VectorStore:
 
 
 def _embed_query(text: str) -> np.ndarray:
+    import time
+    import urllib.error
     api_key = os.getenv("GOOGLE_API_KEY", "")
     body = json.dumps({
         "model": f"models/{EMBEDDING_MODEL}",
         "content": {"parts": [{"text": text[:2000]}]},
     }).encode("utf-8")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL}:embedContent?key={api_key}"
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
-    emb = np.array(data["embedding"]["values"], dtype=np.float32)
-    norm = np.linalg.norm(emb)
-    if norm > 0:
-        emb = emb / norm
-    return emb
+
+    for attempt in range(3):
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+            emb = np.array(data["embedding"]["values"], dtype=np.float32)
+            norm = np.linalg.norm(emb)
+            if norm > 0:
+                emb = emb / norm
+            return emb
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < 2:
+                time.sleep(15 * (attempt + 1))
+                continue
+            raise
+    raise RuntimeError("Embedding API failed after retries")
 
 
 def get_vector_store() -> _VectorStore:

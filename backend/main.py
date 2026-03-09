@@ -100,20 +100,27 @@ Reply in at most 3 sentences. End with "Source: <url>" for each fact."""
         "generationConfig": {"temperature": 0, "maxOutputTokens": 256},
     }).encode("utf-8")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+    import time
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
 
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8", errors="replace")
-        if e.code == 429:
-            raise HTTPException(
-                status_code=429,
-                detail="Gemini API quota exceeded. Wait about a minute and try again.",
-            )
-        raise HTTPException(status_code=502, detail=f"Gemini API error ({e.code}): {err_body[:300]}")
+    data = None
+    for attempt in range(3):
+        req = urllib.request.Request(api_url, data=body, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read())
+            break
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            if e.code == 429 and attempt < 2:
+                time.sleep(20 * (attempt + 1))
+                continue
+            if e.code == 429:
+                raise HTTPException(status_code=429, detail="Gemini API quota exceeded. Wait about a minute and try again.")
+            raise HTTPException(status_code=502, detail=f"Gemini API error ({e.code}): {err_body[:300]}")
+
+    if data is None:
+        raise HTTPException(status_code=429, detail="Gemini API quota exceeded after retries. Wait about a minute and try again.")
 
     try:
         answer = data["candidates"][0]["content"]["parts"][0]["text"].strip()
